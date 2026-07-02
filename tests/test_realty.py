@@ -72,14 +72,62 @@ def test_build_realty_client_selects_provider():
     settings = Settings(
         google_maps_api_key="g",
         openrouter_api_key="o",
-        realty_provider="rentcast",
-        rentcast_api_key="r",
+        realty_provider="realtyapi",
+        realtyapi_key="a",
+        rentcast_api_key=None,
         rapidapi_key=None,
         vision_model="m",
         max_days_since_sale=180,
         request_timeout=30,
     )
-    assert isinstance(realty.build_realty_client(settings), realty.RentCastClient)
+    assert isinstance(realty.build_realty_client(settings), realty.RealtyAPIClient)
 
-    settings2 = Settings(**{**settings.__dict__, "realty_provider": "rapidapi_realtymole", "rapidapi_key": "k"})
-    assert isinstance(realty.build_realty_client(settings2), realty.RealtyMoleRapidAPIClient)
+    settings2 = Settings(**{**settings.__dict__, "realty_provider": "rentcast", "rentcast_api_key": "r"})
+    assert isinstance(realty.build_realty_client(settings2), realty.RentCastClient)
+
+    settings3 = Settings(**{**settings.__dict__, "realty_provider": "rapidapi_realtymole", "rapidapi_key": "k"})
+    assert isinstance(realty.build_realty_client(settings3), realty.RealtyMoleRapidAPIClient)
+
+
+def test_realtyapi_client_success(monkeypatch):
+    captured = {}
+
+    def fake_request_json(method, url, *, error_cls, error_context, timeout, headers, params):
+        captured["headers"] = headers
+        captured["params"] = params
+        return {"results": [{"formattedAddress": "9 Realtyapi Way, Austin, TX 78704", "soldDate": _iso_days_ago(3)}]}
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    listings = client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+
+    assert len(listings) == 1
+    assert listings[0].formatted_address == "9 Realtyapi Way, Austin, TX 78704"
+    assert captured["headers"]["x-realtyapi-key"] == "fake-key"
+    assert captured["params"]["zip"] == "78704"
+
+
+def test_realtyapi_client_rejects_non_zip_location():
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    with pytest.raises(RealtyDataError, match="ZIP"):
+        client.fetch_recent_sales("Austin, TX", limit=5, max_days_since_sale=180)
+
+
+def test_realtyapi_client_handles_alternate_container_and_field_names(monkeypatch):
+    def fake_request_json(*a, **k):
+        return {"data": [{"full_address": "1 Alt Ln", "sold_date": _iso_days_ago(2), "sold_price": 500000}]}
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    listings = client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+
+    assert listings[0].formatted_address == "1 Alt Ln"
+    assert listings[0].price == 500000
+
+
+def test_realtyapi_client_unrecognizable_shape_raises(monkeypatch):
+    monkeypatch.setattr(realty, "request_json", lambda *a, **k: {"unexpected": "shape"})
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    with pytest.raises(RealtyDataError):
+        client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)

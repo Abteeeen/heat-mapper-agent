@@ -49,6 +49,10 @@ cp .env.example .env   # then fill in your API keys
 python main.py --location 78704 --limit 10 --output leads.json -v
 ```
 
+`--location` must be a 5-digit ZIP code with the default provider
+(realtyapi.io only exposes a by-ZIP search endpoint). The `rentcast` and
+`rapidapi_realtymole` providers also accept `"City, ST"`.
+
 Use `--save-images` to also write the satellite/street-view PNGs used for
 each qualified lead to `--image-dir` (default `images/`).
 
@@ -56,33 +60,45 @@ each qualified lead to `--image-dir` (default `images/`).
 
 | Variable | Used for | Where to get it |
 | --- | --- | --- |
-| `RENTCAST_API_KEY` | Recently-sold property data (default provider) | https://app.rentcast.io/app/api — free tier, 50 requests/month, no card |
+| `REALTYAPI_KEY` | Recently-sold property data (default provider) | https://www.realtyapi.io/ — free tier, 250 requests/month, no card required at signup |
 | `GOOGLE_MAPS_API_KEY` | Geocoding, Static Maps (satellite), Street View | https://console.cloud.google.com/google/maps-apis — enable Geocoding API, Maps Static API, Street View Static API |
 | `OPENROUTER_API_KEY` | Vision analysis (Claude 3.5 Sonnet / GPT-4o etc.) | https://openrouter.ai/keys |
 
 No key is required for the postcard weather personalization — it uses
 [Open-Meteo](https://open-meteo.com), which is free and keyless.
 
-### On the property-data provider: why RentCast instead of RapidAPI Realty Mole
+### On the property-data provider
 
-The original "Realty Mole Property API" listing on RapidAPI is the same
-company as [RentCast](https://www.rentcast.io/) — Realty Mole was folded into
-RentCast, and RentCast now maintains its **own** direct API with a genuinely
-free tier and active support, rather than going through the RapidAPI
-marketplace wrapper. So the default provider here (`REALTY_PROVIDER=rentcast`)
-talks to `api.rentcast.io` directly — same underlying data, one fewer
-middleman, and a clearer free-tier story.
+The default is `REALTY_PROVIDER=realtyapi` (realtyapi.io), because its free
+tier doesn't ask for a credit card at signup. **Caveat:** realtyapi.io's own
+docs site blocks automated tooling, so the endpoint (`/search/byzip`) and
+response field names in `shadescout/clients/realty.py` were assembled from
+third-party sources, not verified against a live response. The parser
+(`_to_listings_realtyapi`) tries several plausible field-name variants
+defensively, but if your first real run comes back with zero results, run
+with `-v`, inspect the raw response, and adjust `_ADDRESS_KEYS` /
+`_SALE_DATE_KEYS` / `_PRICE_KEYS` / `_RECORDS_CONTAINER_KEYS` at the top of
+that file to match.
 
-The original RapidAPI Realty Mole endpoint is still supported as a fallback
-(`REALTY_PROVIDER=rapidapi_realtymole`) for anyone with an existing RapidAPI
-subscription — set `RAPIDAPI_KEY` instead of `RENTCAST_API_KEY`.
+Two other providers are built in and can be selected via `REALTY_PROVIDER`:
 
-Other free/low-cost alternatives worth knowing about if neither of the above
-fits:
+- `rentcast` — [RentCast](https://www.rentcast.io/)'s own API (the company
+  that Realty Mole was folded into). Also has a free tier, but their signup
+  flow does ask for card details, which is why it isn't the default. Set
+  `RENTCAST_API_KEY` instead of `REALTYAPI_KEY`.
+- `rapidapi_realtymole` — the original RapidAPI "Realty Mole Property API"
+  listing, kept for teams with an existing RapidAPI subscription. Set
+  `RAPIDAPI_KEY`.
+
+Other free/low-cost alternatives worth knowing about if none of the above
+fit:
+- **Apify Real Estate API** — actor-based scraper (Zillow/Redfin/Realtor),
+  no-card signup, free monthly platform credit. Different call shape
+  (trigger a run, then fetch results) than the REST clients here.
 - **ATTOM Data API** — broad property/sales history data, has a free trial tier.
-- **Estated API** — property data API with a limited free tier.
 - **County assessor open data** — completely free where available, but
-  coverage and "recently sold" freshness vary a lot by county.
+  coverage and "recently sold" freshness vary a lot by county, and it's not
+  a drop-in API (custom per county/state).
 
 Scraping Zillow/Redfin directly is explicitly against their Terms of Service
 and isn't used here.
