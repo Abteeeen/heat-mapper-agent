@@ -21,6 +21,7 @@ class PropertyListing:
     formatted_address: str
     last_sale_date: str | None = None
     price: float | None = None
+    coordinates: Coordinates | None = None
     raw: dict = field(default_factory=dict)
 
 

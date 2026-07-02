@@ -52,6 +52,36 @@ def test_process_property_qualified(monkeypatch):
     assert lead.satellite_image_path is None
 
 
+def test_process_property_uses_embedded_coordinates_and_skips_geocoding(monkeypatch):
+    monkeypatch.setattr(pipeline, "get_upcoming_hot_day", lambda coords: None)
+
+    geocoder = MagicMock()
+    imagery = MagicMock()
+    imagery.get_satellite_image_b64.return_value = "sat"
+    imagery.get_street_view_image_b64.return_value = "street"
+    vision = MagicMock()
+    vision.analyze_property.return_value = VisionAnalysis(
+        has_patio=True, already_covered=False, estimated_sun_hours=8
+    )
+
+    prop = PropertyListing(
+        formatted_address="42 Coords Ave",
+        coordinates=Coordinates(30.25, -97.78),
+    )
+    lead = pipeline.process_property(
+        prop,
+        geocoder=geocoder,
+        imagery=imagery,
+        vision=vision,
+        save_images=False,
+        image_dir=None,
+    )
+
+    assert lead is not None
+    assert lead.coordinates == Coordinates(30.25, -97.78)
+    geocoder.geocode.assert_not_called()
+
+
 def test_process_property_disqualified_already_covered(monkeypatch):
     geocoder = MagicMock()
     geocoder.geocode.return_value = Coordinates(30.0, -97.0)

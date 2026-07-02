@@ -74,6 +74,7 @@ def test_build_realty_client_selects_provider():
         openrouter_api_key="o",
         realty_provider="realtyapi",
         realtyapi_key="a",
+        realtyapi_status="sold",
         rentcast_api_key=None,
         rapidapi_key=None,
         vision_model="m",
@@ -131,6 +132,88 @@ def test_realtyapi_client_handles_real_envelope_shape(monkeypatch):
 
     assert len(listings) == 1
     assert listings[0].formatted_address == "5 Envelope Ct, Austin, TX 78704"
+
+
+def test_realtyapi_client_parses_real_record_shape(monkeypatch):
+    # A trimmed real record from a live /search/byzip call: address is a
+    # nested object with coordinates, sale info is last_sold_date /
+    # last_sold_price, and list_price is the active-listing price.
+    def fake_request_json(*a, **k):
+        return [
+            {
+                "source": "realtor.com",
+                "total": 1,
+                "searchResults": [
+                    {
+                        "property_id": "8464048562",
+                        "status": "for_sale",
+                        "list_price": 1398000,
+                        "list_date": "2026-06-06T01:15:50.000000Z",
+                        "last_sold_date": _iso_days_ago(20)[:10],
+                        "last_sold_price": 950000,
+                        "address": {
+                            "line": "2700 Rock Terrace Dr",
+                            "unit": None,
+                            "city": "Austin",
+                            "state_code": "TX",
+                            "state": "Texas",
+                            "postal_code": "78704",
+                            "country": "USA",
+                            "latitude": 30.252276,
+                            "longitude": -97.7846,
+                        },
+                    }
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    listings = client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+
+    assert len(listings) == 1
+    listing = listings[0]
+    assert listing.formatted_address == "2700 Rock Terrace Dr, Austin, TX, 78704"
+    assert listing.price == 950000  # last_sold_price preferred over list_price
+    assert listing.coordinates is not None
+    assert listing.coordinates.lat == 30.252276
+    assert listing.coordinates.lng == -97.7846
+
+
+def test_realtyapi_client_filters_stale_last_sold_date(monkeypatch):
+    # Real-world case: status=sold is ignored by the API and it returns
+    # active listings whose last_sold_date is years old — those must be
+    # rejected by the recency filter.
+    def fake_request_json(*a, **k):
+        return [
+            {
+                "searchResults": [
+                    {
+                        "status": "for_sale",
+                        "last_sold_date": "2016-09-22",
+                        "address": {"line": "1 Stale St", "city": "Austin", "state_code": "TX", "postal_code": "78704"},
+                    }
+                ]
+            }
+        ]
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+    client = realty.RealtyAPIClient(api_key="fake-key")
+    listings = client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+    assert listings == []
+
+
+def test_realtyapi_client_status_param_is_configurable(monkeypatch):
+    captured = {}
+
+    def fake_request_json(method, url, *, error_cls, error_context, timeout, headers, params):
+        captured["params"] = params
+        return [{"searchResults": []}]
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+    client = realty.RealtyAPIClient(api_key="fake-key", status="recently_sold")
+    client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+    assert captured["params"]["status"] == "recently_sold"
 
 
 def test_realtyapi_client_surfaces_error_disguised_as_empty_result(monkeypatch):

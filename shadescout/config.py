@@ -24,6 +24,7 @@ class Settings:
     openrouter_api_key: str
     realty_provider: str
     realtyapi_key: str | None
+    realtyapi_status: str
     rentcast_api_key: str | None
     rapidapi_key: str | None
     vision_model: str
@@ -69,6 +70,7 @@ def load_settings() -> Settings:
         openrouter_api_key=openrouter_api_key,
         realty_provider=realty_provider,
         realtyapi_key=realtyapi_key,
+        realtyapi_status=os.getenv("REALTYAPI_STATUS", "sold"),
         rentcast_api_key=rentcast_api_key,
         rapidapi_key=rapidapi_key,
         vision_model=os.getenv("VISION_MODEL", "anthropic/claude-3.5-sonnet"),

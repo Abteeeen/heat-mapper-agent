@@ -76,18 +76,23 @@ No key is required for the postcard weather personalization — it uses
 ### On the property-data provider
 
 The default is `REALTY_PROVIDER=realtyapi` (realtyapi.io), because its free
-tier doesn't ask for a credit card at signup. The `/search/byzip` request
-shape is confirmed against a live call: it takes a `zipCode` query param and
-wraps results as `[{"searchResults": [...], ...}]` (a single-element array
-around an envelope object). **Remaining caveat:** the field names *inside*
-each `searchResults` record (address/sale-date/price) are still unverified
-against a non-empty result — realtyapi.io's docs site blocks automated
-tooling, and the only live response seen so far was an error case with zero
-results. The parser (`_to_listings_realtyapi`) tries several plausible
-field-name variants defensively, but if a real run with actual sold
-properties comes back with zero normalized leads, run with `-v`, inspect
-the raw response, and adjust `_ADDRESS_KEYS` / `_SALE_DATE_KEYS` /
-`_PRICE_KEYS` at the top of `shadescout/clients/realty.py` to match.
+tier doesn't ask for a credit card at signup. The full request/response
+shape is confirmed against live calls: `/search/byzip` takes a `zipCode`
+query param, wraps results as `[{"searchResults": [...], ...}]`, and each
+record carries realtor.com-style fields — a nested `address` object with
+`latitude`/`longitude` included, plus `last_sold_date`, `last_sold_price`,
+`list_price`, and `status`. Because coordinates come embedded, the Google
+Geocoding call is skipped for these records (it remains as a fallback for
+records/providers without coordinates).
+
+**Known caveat — the `status` filter:** a live test with `status=sold`
+returned records whose own `status` field was `"for_sale"`, i.e. the API
+appeared to ignore the value and return active listings. Active listings
+mostly have old `last_sold_date` values, so the recency filter
+(`MAX_DAYS_SINCE_SALE`) will correctly reject them — which can mean a run
+ends with zero leads. The value sent is configurable via
+`REALTYAPI_STATUS` (default `sold`); if you hit the zero-leads case, try
+other values such as `recently_sold`.
 
 Two other providers are built in and can be selected via `REALTY_PROVIDER`:
 

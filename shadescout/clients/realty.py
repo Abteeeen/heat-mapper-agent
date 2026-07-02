@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 from shadescout.errors import RealtyDataError
 from shadescout.http import request_json
-from shadescout.models import PropertyListing
+from shadescout.models import Coordinates, PropertyListing
 
 _ZIP_RE = re.compile(r"^\d{5}$")
 _CITY_STATE_RE = re.compile(r"^([^,]+),\s*([A-Za-z]{2})$")
@@ -98,14 +98,16 @@ class RealtyDataClient(ABC):
         """Return up to ``limit`` recently-sold properties for ``location``."""
 
 
-# realtyapi.io response field names. Confirmed live: GET /search/byzip wants
-# a `zipCode` param (not `zip`) and wraps results as `[{..., "searchResults":
-# [...] }]` — a single-element array around an envelope object. The record
-# field names themselves (address/sale-date/price) are still unverified
-# against a real non-empty result, so this list of variants stays defensive.
+# realtyapi.io response shape, confirmed against live calls: GET /search/byzip
+# wants a `zipCode` param and wraps results as `[{"searchResults": [...]}]`.
+# Each record carries realtor.com-style fields: an `address` object
+# ({line, city, state_code, postal_code, latitude, longitude}), plus
+# `last_sold_date`, `last_sold_price`, `list_price`, `status`, `estimate`.
+# The remaining alternate names are kept as fallbacks for other providers'
+# spellings behind the same aggregator.
 _ADDRESS_KEYS = ("formattedAddress", "full_address", "fullAddress", "address", "streetAddress", "location")
-_SALE_DATE_KEYS = ("lastSaleDate", "soldDate", "sold_date", "closeDate", "close_date", "dateSold")
-_PRICE_KEYS = ("lastSalePrice", "soldPrice", "sold_price", "price", "closePrice")
+_SALE_DATE_KEYS = ("last_sold_date", "lastSaleDate", "soldDate", "sold_date", "closeDate", "close_date", "dateSold")
+_PRICE_KEYS = ("last_sold_price", "lastSalePrice", "soldPrice", "sold_price", "list_price", "price", "closePrice")
 _RECORDS_CONTAINER_KEYS = ("searchResults", "results", "properties", "listings", "data", "homes")
 
 
@@ -122,11 +124,27 @@ def _format_address(value) -> str | None:
         return value
     if isinstance(value, dict):
         parts = [
-            value.get(k)
-            for k in ("line", "street", "streetAddress", "city", "state", "zip", "zipcode", "postal_code")
+            _first(value, ("line", "street", "streetAddress")),
+            value.get("city"),
+            _first(value, ("state_code", "state")),
+            _first(value, ("postal_code", "zip", "zipcode")),
         ]
         parts = [str(p) for p in parts if p]
         return ", ".join(parts) if parts else None
+    return None
+
+
+def _extract_coords(record: dict) -> Coordinates | None:
+    address = record.get("address")
+    candidates = [address, record] if isinstance(address, dict) else [record]
+    for candidate in candidates:
+        lat = _first(candidate, ("latitude", "lat"))
+        lng = _first(candidate, ("longitude", "lng", "lon"))
+        if lat is not None and lng is not None:
+            try:
+                return Coordinates(lat=float(lat), lng=float(lng))
+            except (TypeError, ValueError):
+                continue
     return None
 
 
@@ -173,6 +191,7 @@ def _to_listings_realtyapi(records: list[dict], limit: int, max_days_since_sale:
                 formatted_address=address,
                 last_sale_date=str(sale_date) if sale_date is not None else None,
                 price=_first(record, _PRICE_KEYS),
+                coordinates=_extract_coords(record),
                 raw=record,
             )
         )
@@ -182,13 +201,23 @@ def _to_listings_realtyapi(records: list[dict], limit: int, max_days_since_sale:
 
 
 class RealtyAPIClient(RealtyDataClient):
-    """Recommended free provider: realtyapi.io, no credit card required."""
+    """Recommended free provider: realtyapi.io, no credit card required.
+
+    CAUTION on ``status``: a live call with ``status=sold`` came back with
+    records whose own ``status`` field was ``"for_sale"`` — i.e. the API
+    appears to ignore the value ``sold`` and return active listings. Since
+    active listings mostly have old ``last_sold_date`` values, the recency
+    filter will correctly reject them and the run can end with zero leads.
+    The value is configurable (``REALTYAPI_STATUS``) so other candidates
+    (e.g. ``recently_sold``) can be tried without code changes.
+    """
 
     BASE_URL = "https://realtor.realtyapi.io/search/byzip"
 
-    def __init__(self, api_key: str, timeout: float = 30.0):
+    def __init__(self, api_key: str, timeout: float = 30.0, status: str = "sold"):
         self._api_key = api_key
         self._timeout = timeout
+        self._status = status
 
     def fetch_recent_sales(self, location: str, limit: int, max_days_since_sale: int = 180) -> list[PropertyListing]:
         location = location.strip()
@@ -203,7 +232,7 @@ class RealtyAPIClient(RealtyDataClient):
             error_context="RealtyAPI /search/byzip",
             timeout=self._timeout,
             headers={"x-realtyapi-key": self._api_key, "Accept": "application/json"},
-            params={"zipCode": location, "status": "sold", "limit": min(limit * 3, 100)},
+            params={"zipCode": location, "status": self._status, "limit": min(limit * 3, 100)},
         )
         records = _extract_records(data)
         return _to_listings_realtyapi(records, limit, max_days_since_sale)
@@ -264,7 +293,11 @@ class RealtyMoleRapidAPIClient(RealtyDataClient):
 
 def build_realty_client(settings) -> RealtyDataClient:
     if settings.realty_provider == "realtyapi":
-        return RealtyAPIClient(settings.realtyapi_key, timeout=settings.request_timeout)
+        return RealtyAPIClient(
+            settings.realtyapi_key,
+            timeout=settings.request_timeout,
+            status=getattr(settings, "realtyapi_status", "sold"),
+        )
     if settings.realty_provider == "rentcast":
         return RentCastClient(settings.rentcast_api_key, timeout=settings.request_timeout)
     if settings.realty_provider == "rapidapi_realtymole":

@@ -53,7 +53,9 @@ def process_property(
     """Run Steps 3-7 for one property. Returns None if the lead is disqualified."""
     address = prop.formatted_address
 
-    coords = geocoder.geocode(address)
+    # RealtyAPI records already include lat/lng, so geocoding is only a
+    # fallback for providers (or records) that don't carry coordinates.
+    coords = prop.coordinates or geocoder.geocode(address)
 
     satellite_b64 = imagery.get_satellite_image_b64(coords)
     street_view_b64 = imagery.get_street_view_image_b64(coords)

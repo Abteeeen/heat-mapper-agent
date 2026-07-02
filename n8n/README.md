@@ -41,35 +41,34 @@ so a fix in one place is easy to port to the other.
 | # | Node | Mirrors (Python) | Notes |
 |---|------|-------------------|-------|
 | — | Manual Trigger | — | Swap for a Cron/Schedule Trigger to run this daily/weekly per target ZIP. |
-| — | Config | CLI `--location` / `--limit` args | Plain values, not secret — fine to edit in the UI. |
-| 1 | RealtyAPI Search By Zip | `clients/realty.py: RealtyAPIClient` | Native HTTP Request node. |
-| 2 | Normalize & Filter Properties | `clients/realty.py: _extract_records/_to_listings_realtyapi` | Code node, runs once, outputs one n8n item per qualifying property (age-filtered by `maxDaysSinceSale`, sorted, limited). |
-| 3 | Geocode Address | `clients/geocoding.py` | Native HTTP Request node, `continueOnFail` on — a bad address doesn't kill the run, node 4 just skips it. |
-| 4 | Imagery, Vision, Filter & Postcard | `pipeline.py: process_property` + `build_postcard_text` + `clients/weather.py` | One Code node doing Steps 4-7: fetches satellite + street view images, calls OpenRouter with the exact required vision prompt, applies the has_patio/already_covered filter, and builds postcard copy (with a best-effort Open-Meteo forecast for the temperature line). Runs once for all items and loops with a per-property try/catch, matching the Python pipeline's "one bad property doesn't abort the batch" behavior. |
-| 5 | Qualified Leads (Postcard-Ready) | CLI `--output` | End of the pipeline — attach whatever you want here: Google Sheets, Airtable, a print/mail-house API, Slack notification, etc. |
+| — | Config | CLI `--location` / `--limit` args + `REALTYAPI_STATUS` | Plain values, not secret — fine to edit in the UI. |
+| 1 | RealtyAPI Search By Zip | `clients/realty.py: RealtyAPIClient` | Native HTTP Request node. Request/response shape confirmed against live calls. |
+| 2 | Normalize & Filter Properties | `clients/realty.py: _extract_records/_to_listings_realtyapi` | Code node, runs once, outputs one n8n item per qualifying property (age-filtered by `maxDaysSinceSale`, sorted, limited), including the lat/lng embedded in each RealtyAPI record. |
+| 3 | Imagery, Vision, Filter & Postcard | `pipeline.py: process_property` + `build_postcard_text` + `clients/geocoding.py` + `clients/weather.py` | One Code node doing Steps 3-7: resolves coordinates (embedded lat/lng preferred; Google Geocoding only as per-property fallback), fetches satellite + street view images, calls OpenRouter with the exact required vision prompt, applies the has_patio/already_covered filter, and builds postcard copy (with a best-effort Open-Meteo forecast for the temperature line). Runs once for all items and loops with a per-property try/catch, matching the Python pipeline's "one bad property doesn't abort the batch" behavior. |
+| 4 | Qualified Leads (Postcard-Ready) | CLI `--output` | End of the pipeline — attach whatever you want here: Google Sheets, Airtable, a print/mail-house API, Slack notification, etc. |
 
-## Caveat: RealtyAPI record field names are still unverified
+## RealtyAPI response shape (confirmed live)
 
-The `/search/byzip` request/response *envelope* is confirmed against a live
-call: it wants a `zipCode` query param (not `zip`), and wraps results as
-`[{"searchResults": [...], "total": N, ...}]` — a single-element array
-around an envelope object. Node 1 and the top of node 2's code reflect
-that.
+`/search/byzip` takes a `zipCode` query param and wraps results as
+`[{"searchResults": [...], "total": N, ...}]`. Each record carries
+realtor.com-style fields: a nested `address` object (`line`, `city`,
+`state_code`, `postal_code`, `latitude`, `longitude`), plus
+`last_sold_date`, `last_sold_price`, `list_price`, and `status`. Node 2
+parses exactly this, with alternate key names kept as fallbacks.
 
-What's still unverified is the shape of each *record inside*
-`searchResults` (address/sale-date/price field names) — the only live
-response seen so far was an error case with an empty `searchResults`. Node
-2 tries several plausible field-name variants defensively. If a real
-execution with actual results still returns zero normalized properties,
-open node 2's execution data, inspect the raw items inside `searchResults`,
-and adjust `ADDRESS_KEYS` / `SALE_DATE_KEYS` / `PRICE_KEYS` at the top of
-node 2's code to match — then port the same fix to
-`shadescout/clients/realty.py` in the Python version.
+**Known caveat — the `status` filter:** a live test with `status=sold`
+returned records whose own `status` was `"for_sale"` — the API appeared to
+ignore the value and return active listings. Active listings mostly have
+old `last_sold_date` values, so node 2's recency filter will correctly
+reject them, which can mean a run ends with zero leads. The value is
+editable in the Config node (`status`); if you hit the zero-leads case, try
+other values such as `recently_sold`.
 
 ## Cost / rate-limit awareness
 
 - RealtyAPI free tier: 250 requests/month.
-- Every qualifying property costs 1 Geocoding call + 2 Static Maps/Street
-  View calls + 1 OpenRouter vision call (the priciest part — vision models
-  are billed per image token). Keep `limit` small while testing.
+- Every qualifying property costs 2 Static Maps/Street View calls + 1
+  OpenRouter vision call (the priciest part — vision models are billed per
+  image token), plus 1 Geocoding call only if the record lacked embedded
+  coordinates. Keep `limit` small while testing.
 - Open-Meteo (weather) is free and unlimited for reasonable use, no key.
