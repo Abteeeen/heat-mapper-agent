@@ -1,0 +1,85 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from shadescout.clients import realty
+from shadescout.errors import RealtyDataError
+
+
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00.000Z")
+
+
+@pytest.mark.parametrize(
+    "location,expected",
+    [
+        ("78704", {"zipCode": "78704"}),
+        ("Austin, TX", {"city": "Austin", "state": "TX"}),
+        ("Austin", {"city": "Austin"}),
+    ],
+)
+def test_location_params(location, expected):
+    assert realty._location_params(location) == expected
+
+
+def test_to_listings_filters_stale_sales_and_sorts_desc():
+    records = [
+        {"formattedAddress": "1 Old St", "lastSaleDate": _iso_days_ago(400)},
+        {"formattedAddress": "2 Recent St", "lastSaleDate": _iso_days_ago(5)},
+        {"formattedAddress": "3 Mid St", "lastSaleDate": _iso_days_ago(30)},
+        {"formattedAddress": None},  # no address -> dropped
+    ]
+    listings = realty._to_listings(records, limit=10, max_days_since_sale=180)
+    addresses = [l.formatted_address for l in listings]
+    assert addresses == ["2 Recent St", "3 Mid St"]
+
+
+def test_to_listings_respects_limit():
+    records = [{"formattedAddress": f"{i} St", "lastSaleDate": _iso_days_ago(1)} for i in range(5)]
+    listings = realty._to_listings(records, limit=2, max_days_since_sale=180)
+    assert len(listings) == 2
+
+
+def test_rentcast_client_success(monkeypatch):
+    captured = {}
+
+    def fake_request_json(method, url, *, error_cls, error_context, timeout, headers, params):
+        captured["headers"] = headers
+        captured["params"] = params
+        return [{"formattedAddress": "123 Main St, Austin, TX 78704", "lastSaleDate": _iso_days_ago(10)}]
+
+    monkeypatch.setattr(realty, "request_json", fake_request_json)
+
+    client = realty.RentCastClient(api_key="fake-key")
+    listings = client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+
+    assert len(listings) == 1
+    assert listings[0].formatted_address == "123 Main St, Austin, TX 78704"
+    assert captured["headers"]["X-Api-Key"] == "fake-key"
+    assert captured["params"]["zipCode"] == "78704"
+
+
+def test_rentcast_client_bad_shape_raises(monkeypatch):
+    monkeypatch.setattr(realty, "request_json", lambda *a, **k: {"unexpected": "shape"})
+    client = realty.RentCastClient(api_key="fake-key")
+    with pytest.raises(RealtyDataError):
+        client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
+
+
+def test_build_realty_client_selects_provider():
+    from shadescout.config import Settings
+
+    settings = Settings(
+        google_maps_api_key="g",
+        openrouter_api_key="o",
+        realty_provider="rentcast",
+        rentcast_api_key="r",
+        rapidapi_key=None,
+        vision_model="m",
+        max_days_since_sale=180,
+        request_timeout=30,
+    )
+    assert isinstance(realty.build_realty_client(settings), realty.RentCastClient)
+
+    settings2 = Settings(**{**settings.__dict__, "realty_provider": "rapidapi_realtymole", "rapidapi_key": "k"})
+    assert isinstance(realty.build_realty_client(settings2), realty.RealtyMoleRapidAPIClient)
