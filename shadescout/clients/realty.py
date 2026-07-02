@@ -6,13 +6,14 @@ shape so the rest of the pipeline doesn't care which one is active:
 - ``realtyapi`` (default): realtyapi.io's Realtor endpoint. Free tier is
   250 requests/month and their signup does not ask for a credit card
   (RentCast's does, despite being marketed as free — that's why this is
-  the default instead). NOTE: realtyapi.io's docs site blocks automated
-  fetches, so the endpoint/field names below are built from third-party
-  search results, not a verified live response. ``_to_listings_realtyapi``
-  is written defensively (it tries several plausible field-name variants)
-  precisely because of that — if it still doesn't parse a real response,
-  run with ``-v`` and adjust ``_ADDRESS_KEYS`` / ``_SALE_DATE_KEYS`` /
-  ``_PRICE_KEYS`` / ``_RECORDS_CONTAINER_KEYS`` to match what comes back.
+  the default instead). The request shape (``zipCode`` param, response
+  wrapped as ``[{"searchResults": [...], ...}]``) has been confirmed
+  against a live call. The *record* field names (address/sale-date/price
+  inside each ``searchResults`` entry) are still unverified against a
+  non-empty result, so ``_to_listings_realtyapi`` stays defensive (tries
+  several plausible field-name variants) — if it doesn't parse a real
+  response, run with ``-v`` and adjust ``_ADDRESS_KEYS`` / ``_SALE_DATE_KEYS``
+  / ``_PRICE_KEYS`` / ``_RECORDS_CONTAINER_KEYS`` to match what comes back.
 - ``rentcast``: RentCast's native API (also the Realty Mole successor).
   Free tier, but their signup flow does ask for card details.
 - ``rapidapi_realtymole``: the original RapidAPI "Realty Mole Property
@@ -97,13 +98,15 @@ class RealtyDataClient(ABC):
         """Return up to ``limit`` recently-sold properties for ``location``."""
 
 
-# realtyapi.io response field names, unverified against a live account (see
-# module docstring) — kept as a list of plausible variants so a shape
-# mismatch degrades to "field missing" rather than a hard parse failure.
+# realtyapi.io response field names. Confirmed live: GET /search/byzip wants
+# a `zipCode` param (not `zip`) and wraps results as `[{..., "searchResults":
+# [...] }]` — a single-element array around an envelope object. The record
+# field names themselves (address/sale-date/price) are still unverified
+# against a real non-empty result, so this list of variants stays defensive.
 _ADDRESS_KEYS = ("formattedAddress", "full_address", "fullAddress", "address", "streetAddress", "location")
 _SALE_DATE_KEYS = ("lastSaleDate", "soldDate", "sold_date", "closeDate", "close_date", "dateSold")
 _PRICE_KEYS = ("lastSalePrice", "soldPrice", "sold_price", "price", "closePrice")
-_RECORDS_CONTAINER_KEYS = ("results", "properties", "listings", "data", "homes")
+_RECORDS_CONTAINER_KEYS = ("searchResults", "results", "properties", "listings", "data", "homes")
 
 
 def _first(record: dict, keys: tuple[str, ...]):
@@ -128,13 +131,28 @@ def _format_address(value) -> str | None:
 
 
 def _extract_records(data) -> list[dict]:
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
+    # The API wraps results as a single-element array around an envelope
+    # object: [{"searchResults": [...], ...}]. Unwrap that before looking
+    # for a container key.
+    candidates = data if isinstance(data, list) else [data]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
         for key in _RECORDS_CONTAINER_KEYS:
-            value = data.get(key)
+            value = candidate.get(key)
             if isinstance(value, list):
+                if not value and candidate.get("message"):
+                    # e.g. [{"message": "404: zipCode required for /search/byzip",
+                    #        "searchResults": [], ...}] — an error disguised as an
+                    #        empty result rather than a non-2xx status.
+                    raise RealtyDataError(f"RealtyAPI /search/byzip returned an error: {candidate['message']}")
                 return value
+
+    # Fall back to treating the top-level list as the record list itself,
+    # in case a different query shape skips the envelope wrapper.
+    if isinstance(data, list) and data and all(isinstance(item, dict) for item in data):
+        return data
+
     shape = list(data.keys())[:10] if isinstance(data, dict) else type(data).__name__
     raise RealtyDataError(f"RealtyAPI response had no recognizable list of properties (shape: {shape})")
 
@@ -185,7 +203,7 @@ class RealtyAPIClient(RealtyDataClient):
             error_context="RealtyAPI /search/byzip",
             timeout=self._timeout,
             headers={"x-realtyapi-key": self._api_key, "Accept": "application/json"},
-            params={"zip": location, "status": "sold", "limit": min(limit * 3, 100)},
+            params={"zipCode": location, "status": "sold", "limit": min(limit * 3, 100)},
         )
         records = _extract_records(data)
         return _to_listings_realtyapi(records, limit, max_days_since_sale)

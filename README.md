@@ -76,15 +76,18 @@ No key is required for the postcard weather personalization — it uses
 ### On the property-data provider
 
 The default is `REALTY_PROVIDER=realtyapi` (realtyapi.io), because its free
-tier doesn't ask for a credit card at signup. **Caveat:** realtyapi.io's own
-docs site blocks automated tooling, so the endpoint (`/search/byzip`) and
-response field names in `shadescout/clients/realty.py` were assembled from
-third-party sources, not verified against a live response. The parser
-(`_to_listings_realtyapi`) tries several plausible field-name variants
-defensively, but if your first real run comes back with zero results, run
-with `-v`, inspect the raw response, and adjust `_ADDRESS_KEYS` /
-`_SALE_DATE_KEYS` / `_PRICE_KEYS` / `_RECORDS_CONTAINER_KEYS` at the top of
-that file to match.
+tier doesn't ask for a credit card at signup. The `/search/byzip` request
+shape is confirmed against a live call: it takes a `zipCode` query param and
+wraps results as `[{"searchResults": [...], ...}]` (a single-element array
+around an envelope object). **Remaining caveat:** the field names *inside*
+each `searchResults` record (address/sale-date/price) are still unverified
+against a non-empty result — realtyapi.io's docs site blocks automated
+tooling, and the only live response seen so far was an error case with zero
+results. The parser (`_to_listings_realtyapi`) tries several plausible
+field-name variants defensively, but if a real run with actual sold
+properties comes back with zero normalized leads, run with `-v`, inspect
+the raw response, and adjust `_ADDRESS_KEYS` / `_SALE_DATE_KEYS` /
+`_PRICE_KEYS` at the top of `shadescout/clients/realty.py` to match.
 
 Two other providers are built in and can be selected via `REALTY_PROVIDER`:
 

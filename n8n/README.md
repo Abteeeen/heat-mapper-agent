@@ -48,17 +48,23 @@ so a fix in one place is easy to port to the other.
 | 4 | Imagery, Vision, Filter & Postcard | `pipeline.py: process_property` + `build_postcard_text` + `clients/weather.py` | One Code node doing Steps 4-7: fetches satellite + street view images, calls OpenRouter with the exact required vision prompt, applies the has_patio/already_covered filter, and builds postcard copy (with a best-effort Open-Meteo forecast for the temperature line). Runs once for all items and loops with a per-property try/catch, matching the Python pipeline's "one bad property doesn't abort the batch" behavior. |
 | 5 | Qualified Leads (Postcard-Ready) | CLI `--output` | End of the pipeline — attach whatever you want here: Google Sheets, Airtable, a print/mail-house API, Slack notification, etc. |
 
-## Caveat: RealtyAPI field names are unverified
+## Caveat: RealtyAPI record field names are still unverified
 
-Same caveat as the Python client: realtyapi.io's docs site blocks automated
-fetching, so the `/search/byzip` endpoint and its response field names
-(node 1 and the top of node 2's code) were assembled from third-party
-sources, not a verified live response. Node 2 tries several plausible
-field-name variants defensively. If a real execution returns zero
-properties, open node 2's execution data, inspect the raw input JSON from
-node 1, and adjust `ADDRESS_KEYS` / `SALE_DATE_KEYS` / `PRICE_KEYS` /
-`CONTAINER_KEYS` at the top of node 2's code to match — then port the same
-fix to `shadescout/clients/realty.py` in the Python version.
+The `/search/byzip` request/response *envelope* is confirmed against a live
+call: it wants a `zipCode` query param (not `zip`), and wraps results as
+`[{"searchResults": [...], "total": N, ...}]` — a single-element array
+around an envelope object. Node 1 and the top of node 2's code reflect
+that.
+
+What's still unverified is the shape of each *record inside*
+`searchResults` (address/sale-date/price field names) — the only live
+response seen so far was an error case with an empty `searchResults`. Node
+2 tries several plausible field-name variants defensively. If a real
+execution with actual results still returns zero normalized properties,
+open node 2's execution data, inspect the raw items inside `searchResults`,
+and adjust `ADDRESS_KEYS` / `SALE_DATE_KEYS` / `PRICE_KEYS` at the top of
+node 2's code to match — then port the same fix to
+`shadescout/clients/realty.py` in the Python version.
 
 ## Cost / rate-limit awareness
 
