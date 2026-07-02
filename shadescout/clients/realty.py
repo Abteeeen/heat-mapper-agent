@@ -203,21 +203,27 @@ def _to_listings_realtyapi(records: list[dict], limit: int, max_days_since_sale:
 class RealtyAPIClient(RealtyDataClient):
     """Recommended free provider: realtyapi.io, no credit card required.
 
-    CAUTION on ``status``: a live call with ``status=sold`` came back with
-    records whose own ``status`` field was ``"for_sale"`` — i.e. the API
-    appears to ignore the value ``sold`` and return active listings. Since
-    active listings mostly have old ``last_sold_date`` values, the recency
-    filter will correctly reject them and the run can end with zero leads.
-    The value is configurable (``REALTYAPI_STATUS``) so other candidates
-    (e.g. ``recently_sold``) can be tried without code changes.
+    Query params per the endpoint's OpenAPI spec (confirmed live):
+    ``searchType`` selects listing status (``For_Sale`` default / ``For_Rent``
+    / ``Sold``), ``resultCount`` is results per page (default 50, max 200),
+    and ``sortOrder=Most_Recently_Sold`` is only meaningful with
+    ``searchType=Sold``. ``propertyType`` filters out condos/apartments,
+    which have no backyard for a pergola.
     """
 
     BASE_URL = "https://realtor.realtyapi.io/search/byzip"
 
-    def __init__(self, api_key: str, timeout: float = 30.0, status: str = "sold"):
+    def __init__(
+        self,
+        api_key: str,
+        timeout: float = 30.0,
+        search_type: str = "Sold",
+        property_type: str | None = "House",
+    ):
         self._api_key = api_key
         self._timeout = timeout
-        self._status = status
+        self._search_type = search_type
+        self._property_type = property_type
 
     def fetch_recent_sales(self, location: str, limit: int, max_days_since_sale: int = 180) -> list[PropertyListing]:
         location = location.strip()
@@ -225,6 +231,15 @@ class RealtyAPIClient(RealtyDataClient):
             raise RealtyDataError(
                 f"RealtyAPI provider only supports 5-digit ZIP codes as --location, got {location!r}"
             )
+        params = {
+            "zipCode": location,
+            "searchType": self._search_type,
+            "resultCount": min(max(limit * 3, 1), 200),
+        }
+        if "sold" in self._search_type.lower():
+            params["sortOrder"] = "Most_Recently_Sold"
+        if self._property_type:
+            params["propertyType"] = self._property_type
         data = request_json(
             "GET",
             self.BASE_URL,
@@ -232,7 +247,7 @@ class RealtyAPIClient(RealtyDataClient):
             error_context="RealtyAPI /search/byzip",
             timeout=self._timeout,
             headers={"x-realtyapi-key": self._api_key, "Accept": "application/json"},
-            params={"zipCode": location, "status": self._status, "limit": min(limit * 3, 100)},
+            params=params,
         )
         records = _extract_records(data)
         return _to_listings_realtyapi(records, limit, max_days_since_sale)
@@ -296,7 +311,8 @@ def build_realty_client(settings) -> RealtyDataClient:
         return RealtyAPIClient(
             settings.realtyapi_key,
             timeout=settings.request_timeout,
-            status=getattr(settings, "realtyapi_status", "sold"),
+            search_type=getattr(settings, "realtyapi_search_type", "Sold"),
+            property_type=getattr(settings, "realtyapi_property_type", "House"),
         )
     if settings.realty_provider == "rentcast":
         return RentCastClient(settings.rentcast_api_key, timeout=settings.request_timeout)

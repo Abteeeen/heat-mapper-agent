@@ -43,8 +43,14 @@
             },
             {
               "id": "5",
-              "name": "status",
-              "value": "sold",
+              "name": "searchType",
+              "value": "Sold",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "propertyType",
+              "value": "House",
               "type": "string"
             }
           ]
@@ -59,7 +65,7 @@
         460,
         300
       ],
-      "notes": "Edit `location` (5-digit ZIP — RealtyAPI only supports by-ZIP search) and `limit` before running. `status`: a live test showed the API ignoring \"sold\" and returning for_sale listings; if runs yield zero leads, try other values (e.g. \"recently_sold\")."
+      "notes": "Edit `location` (5-digit ZIP — RealtyAPI only supports by-ZIP search) and `limit` before running. `searchType` allowed values per the OpenAPI spec: For_Sale, For_Rent, Sold (comma-separated combos allowed). `propertyType` defaults to House — condos/apartments have no backyard for a pergola."
     },
     {
       "parameters": {
@@ -72,12 +78,20 @@
               "value": "={{ $json.location }}"
             },
             {
-              "name": "status",
-              "value": "={{ $json.status }}"
+              "name": "searchType",
+              "value": "={{ $json.searchType }}"
             },
             {
-              "name": "limit",
-              "value": "={{ $json.limit * 3 }}"
+              "name": "sortOrder",
+              "value": "={{ $json.searchType.toLowerCase().includes('sold') ? 'Most_Recently_Sold' : 'Recommended' }}"
+            },
+            {
+              "name": "propertyType",
+              "value": "={{ $json.propertyType }}"
+            },
+            {
+              "name": "resultCount",
+              "value": "={{ Math.min(Math.max($json.limit * 3, 1), 200) }}"
             }
           ]
         },
@@ -104,7 +118,7 @@
         680,
         300
       ],
-      "notes": "Request/response shape confirmed live: zipCode param, results wrapped as [{searchResults: [...]}]."
+      "notes": "Params per the endpoint's OpenAPI spec: searchType (For_Sale/For_Rent/Sold), sortOrder, propertyType, resultCount (default 50, max 200). Response wrapped as [{searchResults: [...]}]."
     },
     {
       "parameters": {

@@ -74,7 +74,8 @@ def test_build_realty_client_selects_provider():
         openrouter_api_key="o",
         realty_provider="realtyapi",
         realtyapi_key="a",
-        realtyapi_status="sold",
+        realtyapi_search_type="Sold",
+        realtyapi_property_type="House",
         rentcast_api_key=None,
         rapidapi_key=None,
         vision_model="m",
@@ -107,6 +108,11 @@ def test_realtyapi_client_success(monkeypatch):
     assert listings[0].formatted_address == "9 Realtyapi Way, Austin, TX 78704"
     assert captured["headers"]["x-realtyapi-key"] == "fake-key"
     assert captured["params"]["zipCode"] == "78704"
+    # Confirmed param names from the endpoint's OpenAPI spec
+    assert captured["params"]["searchType"] == "Sold"
+    assert captured["params"]["sortOrder"] == "Most_Recently_Sold"
+    assert captured["params"]["resultCount"] == 15
+    assert captured["params"]["propertyType"] == "House"
 
 
 def test_realtyapi_client_handles_real_envelope_shape(monkeypatch):
@@ -203,7 +209,7 @@ def test_realtyapi_client_filters_stale_last_sold_date(monkeypatch):
     assert listings == []
 
 
-def test_realtyapi_client_status_param_is_configurable(monkeypatch):
+def test_realtyapi_client_search_type_is_configurable(monkeypatch):
     captured = {}
 
     def fake_request_json(method, url, *, error_cls, error_context, timeout, headers, params):
@@ -211,9 +217,12 @@ def test_realtyapi_client_status_param_is_configurable(monkeypatch):
         return [{"searchResults": []}]
 
     monkeypatch.setattr(realty, "request_json", fake_request_json)
-    client = realty.RealtyAPIClient(api_key="fake-key", status="recently_sold")
+    client = realty.RealtyAPIClient(api_key="fake-key", search_type="For_Sale", property_type=None)
     client.fetch_recent_sales("78704", limit=5, max_days_since_sale=180)
-    assert captured["params"]["status"] == "recently_sold"
+    assert captured["params"]["searchType"] == "For_Sale"
+    # sortOrder=Most_Recently_Sold is only meaningful with searchType=Sold
+    assert "sortOrder" not in captured["params"]
+    assert "propertyType" not in captured["params"]
 
 
 def test_realtyapi_client_surfaces_error_disguised_as_empty_result(monkeypatch):

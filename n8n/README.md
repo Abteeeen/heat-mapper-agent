@@ -47,22 +47,26 @@ so a fix in one place is easy to port to the other.
 | 3 | Imagery, Vision, Filter & Postcard | `pipeline.py: process_property` + `build_postcard_text` + `clients/geocoding.py` + `clients/weather.py` | One Code node doing Steps 3-7: resolves coordinates (embedded lat/lng preferred; Google Geocoding only as per-property fallback), fetches satellite + street view images, calls OpenRouter with the exact required vision prompt, applies the has_patio/already_covered filter, and builds postcard copy (with a best-effort Open-Meteo forecast for the temperature line). Runs once for all items and loops with a per-property try/catch, matching the Python pipeline's "one bad property doesn't abort the batch" behavior. |
 | 4 | Qualified Leads (Postcard-Ready) | CLI `--output` | End of the pipeline — attach whatever you want here: Google Sheets, Airtable, a print/mail-house API, Slack notification, etc. |
 
-## RealtyAPI response shape (confirmed live)
+## RealtyAPI request/response (confirmed against the OpenAPI spec + live calls)
 
-`/search/byzip` takes a `zipCode` query param and wraps results as
-`[{"searchResults": [...], "total": N, ...}]`. Each record carries
-realtor.com-style fields: a nested `address` object (`line`, `city`,
-`state_code`, `postal_code`, `latitude`, `longitude`), plus
-`last_sold_date`, `last_sold_price`, `list_price`, and `status`. Node 2
-parses exactly this, with alternate key names kept as fallbacks.
+`/search/byzip` params (per `https://realtor.realtyapi.io/openapi.json`):
+`zipCode` (required), `searchType` (`For_Sale` — the default if omitted —
+`For_Rent`, `Sold`; comma-separated combos allowed), `resultCount` (per
+page, default 50, max 200), `sortOrder` (`Most_Recently_Sold` is only
+meaningful with `searchType=Sold`), and `propertyType` (`House, Condo,
+Townhome, Multi_Family, Mobile, Farm, Land, Co-op`). Unknown param names
+are silently ignored — not rejected — so typos degrade to default
+(for-sale) results rather than an error.
 
-**Known caveat — the `status` filter:** a live test with `status=sold`
-returned records whose own `status` was `"for_sale"` — the API appeared to
-ignore the value and return active listings. Active listings mostly have
-old `last_sold_date` values, so node 2's recency filter will correctly
-reject them, which can mean a run ends with zero leads. The value is
-editable in the Config node (`status`); if you hit the zero-leads case, try
-other values such as `recently_sold`.
+The response wraps results as `[{"searchResults": [...], "total": N, ...}]`.
+Each record carries realtor.com-style fields: a nested `address` object
+(`line`, `city`, `state_code`, `postal_code`, `latitude`, `longitude`),
+plus `last_sold_date`, `last_sold_price`, `list_price`, and `status`.
+Node 2 parses exactly this, with alternate key names kept as fallbacks.
+
+The Config node defaults to `searchType=Sold` (the whole pitch targets
+recent buyers) and `propertyType=House` (condos/apartments have no backyard
+for a pergola) — both editable in the UI.
 
 ## Cost / rate-limit awareness
 

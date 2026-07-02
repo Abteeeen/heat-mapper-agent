@@ -85,14 +85,21 @@ record carries realtor.com-style fields — a nested `address` object with
 Geocoding call is skipped for these records (it remains as a fallback for
 records/providers without coordinates).
 
-**Known caveat — the `status` filter:** a live test with `status=sold`
-returned records whose own `status` field was `"for_sale"`, i.e. the API
-appeared to ignore the value and return active listings. Active listings
-mostly have old `last_sold_date` values, so the recency filter
-(`MAX_DAYS_SINCE_SALE`) will correctly reject them — which can mean a run
-ends with zero leads. The value sent is configurable via
-`REALTYAPI_STATUS` (default `sold`); if you hit the zero-leads case, try
-other values such as `recently_sold`.
+Query parameters follow the endpoint's OpenAPI spec (fetched from
+`https://realtor.realtyapi.io/openapi.json`): listing status is selected
+with `searchType` (`For_Sale` — the default if omitted — `For_Rent`, or
+`Sold`; comma-separated combos allowed), page size with `resultCount`
+(default 50, max 200), and `sortOrder=Most_Recently_Sold` orders sold
+listings newest-first. ShadeScout sends `searchType=Sold` +
+`sortOrder=Most_Recently_Sold` by default, both configurable:
+
+- `REALTYAPI_SEARCH_TYPE` (default `Sold`) — unknown values are silently
+  ignored by the API and it falls back to `For_Sale`, so stick to the
+  documented ones.
+- `REALTYAPI_PROPERTY_TYPE` (default `House`) — excludes condos/apartments,
+  which have no backyard for a pergola. Allowed: `House, Condo, Townhome,
+  Multi_Family, Mobile, Farm, Land, Co-op` (comma-separated). Set empty to
+  include all.
 
 Two other providers are built in and can be selected via `REALTY_PROVIDER`:
 
