@@ -41,11 +41,26 @@ so a fix in one place is easy to port to the other.
 | # | Node | Mirrors (Python) | Notes |
 |---|------|-------------------|-------|
 | — | Manual Trigger | — | Swap for a Cron/Schedule Trigger to run this daily/weekly per target ZIP. |
-| — | Config | CLI `--location` / `--limit` args + `REALTYAPI_STATUS` | Plain values, not secret — fine to edit in the UI. |
+| — | Config | CLI `--location` / `--limit` args + `REALTYAPI_SEARCH_TYPE` / `REALTYAPI_PROPERTY_TYPE` | Plain values, not secret — fine to edit in the UI. |
 | 1 | RealtyAPI Search By Zip | `clients/realty.py: RealtyAPIClient` | Native HTTP Request node. Request/response shape confirmed against live calls. |
 | 2 | Normalize & Filter Properties | `clients/realty.py: _extract_records/_to_listings_realtyapi` | Code node, runs once, outputs one n8n item per qualifying property (age-filtered by `maxDaysSinceSale`, sorted, limited), including the lat/lng embedded in each RealtyAPI record. |
 | 3 | Imagery, Vision, Filter & Postcard | `pipeline.py: process_property` + `build_postcard_text` + `clients/geocoding.py` + `clients/weather.py` | One Code node doing Steps 3-7: resolves coordinates (embedded lat/lng preferred; Google Geocoding only as per-property fallback), fetches satellite + street view images, calls OpenRouter with the exact required vision prompt, applies the has_patio/already_covered filter, and builds postcard copy (with a best-effort Open-Meteo forecast for the temperature line). Runs once for all items and loops with a per-property try/catch, matching the Python pipeline's "one bad property doesn't abort the batch" behavior. |
 | 4 | Qualified Leads (Postcard-Ready) | CLI `--output` | End of the pipeline — attach whatever you want here: Google Sheets, Airtable, a print/mail-house API, Slack notification, etc. |
+
+### Node 3 observability
+
+- **Missing credentials fail loudly**: if `GOOGLE_MAPS_API_KEY` or
+  `OPENROUTER_API_KEY` isn't available, node 3 throws immediately with
+  instructions (including the n8n Cloud `$vars` workaround) instead of
+  silently producing an empty result.
+- **Per-property run log**: every property's outcome (`QUALIFIED` /
+  `DISQUALIFIED` / `SKIP` / `ERROR` with the reason) is written via
+  `console.log` and, when *zero* leads qualify, thrown as the node error —
+  so an empty run always tells you why.
+- **The analyzed images are attached as binary data** (`satellite` and
+  `street_view` properties) on each qualified lead. View them in the
+  execution panel's Output → Binary tab, or feed them to downstream nodes
+  (email attachment, Drive upload, the postcard print API).
 
 ## RealtyAPI request/response (confirmed against the OpenAPI spec + live calls)
 
