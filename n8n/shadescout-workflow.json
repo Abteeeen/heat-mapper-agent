@@ -1,0 +1,244 @@
+{
+  "name": "ShadeScout — Pergola/Shade Lead Generation",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "When clicking “Execute workflow”",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "location",
+              "value": "78704",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "limit",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "3",
+              "name": "maxDaysSinceSale",
+              "value": 180,
+              "type": "number"
+            },
+            {
+              "id": "4",
+              "name": "visionModel",
+              "value": "anthropic/claude-3.5-sonnet",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config-node",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "Edit `location` (5-digit ZIP — RealtyAPI only supports by-ZIP search) and `limit` before running."
+    },
+    {
+      "parameters": {
+        "url": "https://realtor.realtyapi.io/search/byzip",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "zip",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "status",
+              "value": "sold"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.limit * 3 }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-realtyapi-key",
+              "value": "={{ $env.REALTYAPI_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-realtyapi",
+      "name": "1. RealtyAPI Search By Zip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "notes": "Endpoint/field names unverified against a live account — see n8n/README.md."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Step 1 (rest of it) — normalize whatever shape RealtyAPI returned into a\n// flat list of property items, mirroring shadescout/clients/realty.py\n// _extract_records / _to_listings_realtyapi. Field names are unverified\n// against a live RealtyAPI response (their docs site blocks automated\n// fetching) — if this produces zero properties, log $json here and adjust\n// ADDRESS_KEYS / SALE_DATE_KEYS / PRICE_KEYS / CONTAINER_KEYS below.\n\nconst ADDRESS_KEYS = ['formattedAddress', 'full_address', 'fullAddress', 'address', 'streetAddress', 'location'];\nconst SALE_DATE_KEYS = ['lastSaleDate', 'soldDate', 'sold_date', 'closeDate', 'close_date', 'dateSold'];\nconst PRICE_KEYS = ['lastSalePrice', 'soldPrice', 'sold_price', 'price', 'closePrice'];\nconst CONTAINER_KEYS = ['results', 'properties', 'listings', 'data', 'homes'];\n\nfunction first(record, keys) {\n  for (const key of keys) {\n    if (record[key] !== undefined && record[key] !== null && record[key] !== '') return record[key];\n  }\n  return null;\n}\n\nfunction formatAddress(value) {\n  if (typeof value === 'string') return value;\n  if (value && typeof value === 'object') {\n    const parts = ['line', 'street', 'streetAddress', 'city', 'state', 'zip', 'zipcode', 'postal_code']\n      .map((k) => value[k])\n      .filter(Boolean);\n    return parts.length ? parts.join(', ') : null;\n  }\n  return null;\n}\n\nfunction daysSince(isoDate) {\n  const parsed = new Date(isoDate);\n  if (isNaN(parsed.getTime())) return null;\n  return Math.floor((Date.now() - parsed.getTime()) / 86400000);\n}\n\nconst body = $input.first().json;\nlet records = Array.isArray(body) ? body : null;\nif (!records) {\n  for (const key of CONTAINER_KEYS) {\n    if (Array.isArray(body[key])) {\n      records = body[key];\n      break;\n    }\n  }\n}\nif (!records) {\n  throw new Error('RealtyAPI response had no recognizable list of properties. Keys seen: ' + JSON.stringify(Object.keys(body || {})));\n}\n\nconst config = $('Config').first().json;\n\nconst listings = [];\nfor (const record of records) {\n  const address = formatAddress(first(record, ADDRESS_KEYS));\n  if (!address) continue;\n  const saleDate = first(record, SALE_DATE_KEYS);\n  if (saleDate) {\n    const age = daysSince(saleDate);\n    if (age !== null && age > config.maxDaysSinceSale) continue;\n  }\n  listings.push({\n    formattedAddress: address,\n    lastSaleDate: saleDate,\n    price: first(record, PRICE_KEYS),\n  });\n}\n\nlistings.sort((a, b) => (b.lastSaleDate || '').localeCompare(a.lastSaleDate || ''));\n\nreturn listings.slice(0, config.limit).map((listing) => ({ json: listing }));"
+      },
+      "id": "code-normalize",
+      "name": "2. Normalize & Filter Properties",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/geocode/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "address",
+              "value": "={{ $json.formattedAddress }}"
+            },
+            {
+              "name": "key",
+              "value": "={{ $env.GOOGLE_MAPS_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "http-geocode",
+      "name": "3. Geocode Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Steps 4-7 for every property that made it through geocoding: fetch\n// satellite + street view imagery, run the OpenRouter vision analysis with\n// the exact required prompt, apply the has_patio/already_covered filter,\n// and build the postcard copy. Mirrors shadescout/pipeline.py process_property\n// + build_postcard_text. Runs once for ALL items (not per-item) so a\n// failure on one property can be caught and skipped without dropping the\n// whole batch — matching the Python pipeline's per-property error isolation.\n\nconst config = $('Config').first().json;\nconst properties = $('2. Normalize & Filter Properties').all();\nconst geocodes = $input.all(); // same order/length as `properties`, 1:1\n\nconst GOOGLE_KEY = $env.GOOGLE_MAPS_API_KEY;\nconst OPENROUTER_KEY = $env.OPENROUTER_API_KEY;\n\nconst PROMPT = `Image 1 below is a top-down satellite view (zoom 20) of the property. Image 2 is a street-level view of the same address for additional context.\n\nYou are an expert landscape and shade analyst. Look at this satellite image of a residential property.\n1. Does this home have a backyard patio or deck? (Yes/No)\n2. Is there already a solid roof, pergola, or heavy tree cover shading the patio? (Yes/No)\n3. Based on the sun's trajectory (assume south-facing gets the most sun in the US), estimate how many hours of direct, punishing sunlight this patio gets per day.\n4. Return ONLY a valid JSON object exactly like this: {\"has_patio\": true, \"already_covered\": false, \"estimated_sun_hours\": 10}`;\n\nasync function fetchImageBase64(url, qs) {\n  const buffer = await this.helpers.httpRequest({ method: 'GET', url, qs, encoding: 'arraybuffer' });\n  return Buffer.from(buffer).toString('base64');\n}\n\nasync function fetchUpcomingHotDay(lat, lng) {\n  try {\n    const weather = await this.helpers.httpRequest({\n      method: 'GET',\n      url: 'https://api.open-meteo.com/v1/forecast',\n      qs: {\n        latitude: lat,\n        longitude: lng,\n        daily: 'temperature_2m_max',\n        temperature_unit: 'fahrenheit',\n        forecast_days: 7,\n        timezone: 'auto',\n      },\n      json: true,\n    });\n    const highs = weather?.daily?.temperature_2m_max || [];\n    const dates = weather?.daily?.time || [];\n    if (!highs.length) return null;\n    const idx = highs.indexOf(Math.max(...highs));\n    const day = new Date(dates[idx]).toLocaleDateString('en-US', { weekday: 'long' });\n    return { day, tempF: Math.round(highs[idx]) };\n  } catch (err) {\n    return null; // best-effort only, matches shadescout/clients/weather.py\n  }\n}\n\nfunction buildPostcardText(sunHours, hotDay) {\n  if (hotDay) {\n    return `Your patio takes ${sunHours} hours of direct sun a day. This ${hotDay.day} it hits ${hotDay.tempF}°. Scan this QR code to see how a louvered pergola looks in your exact backyard.`;\n  }\n  return `Your patio takes ${sunHours} hours of direct, punishing sun a day. Scan this QR code to see how a louvered pergola looks in your exact backyard.`;\n}\n\nconst qualifiedLeads = [];\n\nfor (let i = 0; i < geocodes.length; i++) {\n  const geocode = geocodes[i].json;\n  const property = properties[i].json;\n  const address = property.formattedAddress;\n\n  try {\n    if (geocode.status !== 'OK' || !geocode.results || !geocode.results.length) {\n      continue; // geocoding failed for this address, skip it\n    }\n    const { lat, lng } = geocode.results[0].geometry.location;\n\n    const satelliteB64 = await fetchImageBase64.call(this, 'https://maps.googleapis.com/maps/api/staticmap', {\n      center: `${lat},${lng}`,\n      zoom: 20,\n      maptype: 'satellite',\n      size: '640x640',\n      key: GOOGLE_KEY,\n    });\n    const streetB64 = await fetchImageBase64.call(this, 'https://maps.googleapis.com/maps/api/streetview', {\n      location: `${lat},${lng}`,\n      size: '640x640',\n      key: GOOGLE_KEY,\n    });\n\n    const visionResp = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://openrouter.ai/api/v1/chat/completions',\n      headers: {\n        Authorization: `Bearer ${OPENROUTER_KEY}`,\n        'Content-Type': 'application/json',\n      },\n      body: {\n        model: config.visionModel,\n        messages: [\n          {\n            role: 'user',\n            content: [\n              { type: 'text', text: PROMPT },\n              { type: 'image_url', image_url: { url: `data:image/png;base64,${satelliteB64}` } },\n              { type: 'image_url', image_url: { url: `data:image/png;base64,${streetB64}` } },\n            ],\n          },\n        ],\n      },\n      json: true,\n    });\n\n    const content = visionResp?.choices?.[0]?.message?.content;\n    const match = content && content.match(/\\{[\\s\\S]*\\}/);\n    if (!match) continue; // vision model gave no parseable JSON, skip\n\n    const analysis = JSON.parse(match[0]);\n    if (!analysis.has_patio || analysis.already_covered) continue; // disqualified\n\n    const sunHours = Number(analysis.estimated_sun_hours);\n    const hotDay = await fetchUpcomingHotDay.call(this, lat, lng);\n\n    qualifiedLeads.push({\n      json: {\n        lead_status: 'QUALIFIED',\n        property_address: address,\n        coordinates: { lat, lng },\n        sun_hours: sunHours,\n        postcard_text: buildPostcardText(sunHours, hotDay),\n      },\n    });\n  } catch (err) {\n    // isolate failures per-property instead of aborting the whole run\n    continue;\n  }\n}\n\nreturn qualifiedLeads;"
+      },
+      "id": "code-pipeline",
+      "name": "4. Imagery, Vision, Filter & Postcard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-output",
+      "name": "5. Qualified Leads (Postcard-Ready)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking “Execute workflow”": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "1. RealtyAPI Search By Zip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. RealtyAPI Search By Zip": {
+      "main": [
+        [
+          {
+            "node": "2. Normalize & Filter Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Normalize & Filter Properties": {
+      "main": [
+        [
+          {
+            "node": "3. Geocode Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Geocode Address": {
+      "main": [
+        [
+          {
+            "node": "4. Imagery, Vision, Filter & Postcard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Imagery, Vision, Filter & Postcard": {
+      "main": [
+        [
+          {
+            "node": "5. Qualified Leads (Postcard-Ready)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

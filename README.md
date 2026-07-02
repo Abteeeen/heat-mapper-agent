@@ -6,6 +6,12 @@ satellite + street-level imagery and a vision model, and outputs
 hyper-personalized postcard copy for the properties that are actually good
 fits (has a patio, isn't already shaded).
 
+Two implementations of the same pipeline are provided:
+- **`shadescout/`** — a Python CLI (documented below).
+- **`n8n/`** — an importable n8n workflow, for teams that prefer running
+  this as a scheduled visual workflow instead of a script. See
+  [`n8n/README.md`](n8n/README.md).
+
 ## How it works
 
 For each target location, ShadeScout runs:
