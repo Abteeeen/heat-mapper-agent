@@ -55,6 +55,18 @@ so a fix in one place is easy to port to the other.
   `DISQUALIFIED` / `SKIP` / `ERROR` with the reason) is written via
   `console.log` and, when *zero* leads qualify, thrown as the node error —
   so an empty run always tells you why.
+- **Per-call error detail**: each of the four external HTTP calls (Google
+  Static Maps, Google Street View, OpenRouter vision, and the Google
+  Geocoding fallback) is wrapped so a failure names the specific endpoint,
+  method, URL, HTTP status, and up to 300 chars of the response body —
+  e.g. `OpenRouter vision (POST https://openrouter.ai/...) failed:
+  status=404 body={"error":{"message":"No endpoints found for
+  anthropic/claude-3.5-sonnet"}}`. Without this, n8n's HTTP helper only
+  surfaces a bare `"Request failed with status code 404"` with no way to
+  tell which of the four calls failed or why. If you see a 404 naming the
+  OpenRouter model, check [openrouter.ai/models](https://openrouter.ai/models)
+  for a currently valid vision-capable slug and update `visionModel` in
+  the Config node — no code changes needed.
 - **The analyzed images are attached as binary data** (`satellite` and
   `street_view` properties) on each qualified lead. View them in the
   execution panel's Output → Binary tab, or feed them to downstream nodes
