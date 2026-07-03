@@ -75,7 +75,7 @@ def load_settings() -> Settings:
         realtyapi_property_type=os.getenv("REALTYAPI_PROPERTY_TYPE", "House"),
         rentcast_api_key=rentcast_api_key,
         rapidapi_key=rapidapi_key,
-        vision_model=os.getenv("VISION_MODEL", "anthropic/claude-3.5-sonnet"),
+        vision_model=os.getenv("VISION_MODEL", "google/gemini-3.5-flash"),
         max_days_since_sale=int(os.getenv("MAX_DAYS_SINCE_SALE", "180")),
         request_timeout=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "30")),
     )

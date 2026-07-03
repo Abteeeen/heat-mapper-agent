@@ -12,6 +12,7 @@ def _clear_env(monkeypatch):
         "RAPIDAPI_KEY",
         "GOOGLE_MAPS_API_KEY",
         "OPENROUTER_API_KEY",
+        "VISION_MODEL",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -48,7 +49,7 @@ def test_load_settings_success(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "o")
     settings = load_settings()
     assert settings.realty_provider == "realtyapi"
-    assert settings.vision_model == "anthropic/claude-3.5-sonnet"
+    assert settings.vision_model == "google/gemini-3.5-flash"
 
 
 def test_load_settings_default_provider_is_realtyapi(monkeypatch):

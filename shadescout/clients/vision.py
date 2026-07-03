@@ -55,7 +55,7 @@ def _coerce_analysis(payload: dict) -> VisionAnalysis:
 class VisionClient:
     BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    def __init__(self, api_key: str, model: str = "anthropic/claude-3.5-sonnet", timeout: float = 60.0):
+    def __init__(self, api_key: str, model: str = "google/gemini-3.5-flash", timeout: float = 60.0):
         self._api_key = api_key
         self._model = model
         self._timeout = timeout

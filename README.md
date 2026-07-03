@@ -131,8 +131,12 @@ See `.env.example` for the full list. Notable optional settings:
 - `MAX_DAYS_SINCE_SALE` (default `180`) — properties whose last recorded sale
   is older than this are skipped, since the whole pitch is "you just moved
   in, here's your backyard."
-- `VISION_MODEL` (default `anthropic/claude-3.5-sonnet`) — any OpenRouter
-  vision-capable model ID works, e.g. `openai/gpt-4o`.
+- `VISION_MODEL` (default `google/gemini-3.5-flash`) — any OpenRouter
+  vision-capable model ID works, e.g. `openai/gpt-4o`. OpenRouter retires
+  model slugs over time (this default replaced `anthropic/claude-3.5-sonnet`
+  after OpenRouter started 404ing on it) — if you get a 404 naming the
+  model, check [openrouter.ai/models](https://openrouter.ai/models) for a
+  current slug.
 
 ## Project layout
 

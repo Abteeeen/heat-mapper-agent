@@ -38,7 +38,7 @@
             {
               "id": "4",
               "name": "visionModel",
-              "value": "anthropic/claude-3.5-sonnet",
+              "value": "google/gemini-3.5-flash",
               "type": "string"
             },
             {
