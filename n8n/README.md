@@ -10,28 +10,26 @@ so a fix in one place is easy to port to the other.
 ## Import
 
 1. In n8n: **Workflows → Import from File** → select `shadescout-workflow.json`.
-2. Set three environment variables on the n8n instance itself (not inside
-   the workflow — never paste real keys into node parameters, they get
-   saved into the workflow JSON in plain text):
-   - `REALTYAPI_KEY`
-   - `GOOGLE_MAPS_API_KEY`
-   - `OPENROUTER_API_KEY`
+2. Paste your three keys directly where they're used — this workflow does
+   **not** rely on `$env`/`$vars` (those require self-hosted n8n with
+   process env vars, or the Variables feature, and don't work on every
+   plan/setup):
+   - **RealtyAPI key**: open node **1. RealtyAPI Search By Zip** → Headers
+     tab → replace the `x-realtyapi-key` value's
+     `PASTE_YOUR_REALTYAPI_KEY_HERE` placeholder with your real key.
+   - **Google Maps key**: open node **3. Imagery, Vision, Filter &
+     Postcard** → find `const GOOGLE_MAPS_API_KEY = 'PASTE_...'` near the
+     top of the code and replace the placeholder.
+   - **OpenRouter key**: same node, `const OPENROUTER_API_KEY = 'PASTE_...'`.
 
-   Self-hosted (Docker Compose example):
-   ```yaml
-   environment:
-     - REALTYAPI_KEY=your_key
-     - GOOGLE_MAPS_API_KEY=your_key
-     - OPENROUTER_API_KEY=your_key
-   ```
-   Or export them before `n8n start` if running the CLI directly.
-
-   n8n Cloud does not expose custom process env vars to workflows. If
-   you're on Cloud, the workaround is to replace the `$env.XXX` references
-   in nodes **1**, **3**, and **4** with n8n's built-in
-   [Variables](https://docs.n8n.io/environments/variables/) feature
-   (`$vars.XXX`) instead — functionally identical, just a different
-   secret-storage mechanism.
+   Trade-off: the keys now live in the workflow JSON in plain text. That's
+   fine for a private workflow only you can see, but **never export or
+   share this file once the keys are filled in** — export a fresh copy
+   from this repo (with placeholders) if you need to share it. If your n8n
+   instance does support environment variables and you'd rather use those,
+   swap the `const X = 'PASTE_...'` lines back to `$env.X` (self-hosted) or
+   `$vars.X` ([n8n Variables](https://docs.n8n.io/environments/variables/),
+   Cloud-compatible) instead.
 3. Open the **Config** node and edit `location` (must be a 5-digit ZIP —
    see the caveat below) and `limit`.
 4. Click **Execute workflow**.
@@ -49,10 +47,10 @@ so a fix in one place is easy to port to the other.
 
 ### Node 3 observability
 
-- **Missing credentials fail loudly**: if `GOOGLE_MAPS_API_KEY` or
-  `OPENROUTER_API_KEY` isn't available, node 3 throws immediately with
-  instructions (including the n8n Cloud `$vars` workaround) instead of
-  silently producing an empty result.
+- **Missing credentials fail loudly**: if the `GOOGLE_MAPS_API_KEY` /
+  `OPENROUTER_API_KEY` placeholders at the top of node 3 weren't replaced
+  with real keys, the node throws immediately and tells you which one,
+  instead of silently producing an empty result.
 - **Per-property run log**: every property's outcome (`QUALIFIED` /
   `DISQUALIFIED` / `SKIP` / `ERROR` with the reason) is written via
   `console.log` and, when *zero* leads qualify, thrown as the node error —
