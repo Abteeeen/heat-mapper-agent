@@ -1,0 +1,53 @@
+{
+  "title": "CLAUDE FABLE / CAMPAIGNS / SUNDIAL · DALLAS-FORT WORTH",
+  "active_tab": "Census",
+  "prompt": "sundial@fable-5 : ~ % fable census --metro dfw --sold 12mo",
+  "disclaimer": [
+    "Real sold homes (Zillow) · sun exposure measured from Google Solar hourly shade, 1m grid.",
+    "Illustrative demo · no mail sent in this run."
+  ],
+  "clips": [
+    {
+      "video": "path/to/clip1.mp4",
+      "pill": "aerial scan · property located",
+      "log": [
+        ["16:12:24.487", "INFO", "zillow sold feed · 1 property matched"],
+        ["16:12:24.817", "D", "Prosper 75078 · 4bd/3ba · 2,840 sqft"],
+        ["16:12:25.152", "D", "listing photos · 18 frames · classify"],
+        ["16:12:25.463", "INFO", "geocode · lat/lng resolved"],
+        ["16:12:25.688", "OK", "backyard found · 2 of 18 photos"],
+        ["16:12:25.826", "INFO", "satellite fetch · static maps API"],
+        ["16:12:26.123", "OK", "property located · zoom locked"],
+        ["16:12:26.430", "INFO", "imagery · 2024-03-06 capture"],
+        ["16:12:26.688", "OK", "parcel boundary · confirmed"]
+      ],
+      "stats": [
+        ["SOLD PULLED", "500", "white"],
+        ["PHOTOS READ", "18", "white"],
+        ["FLAGGED", "1", "yellow"],
+        ["POSTCARDS", "0", "gray"]
+      ]
+    },
+    {
+      "video": "path/to/clip2.mp4",
+      "pill": "sun exposure · hourly heat map",
+      "log": [
+        ["16:12:26.761", "INFO", "solar api · hourly shade · 24 bands"],
+        ["16:12:26.894", "D", "07:00 · shade"],
+        ["16:12:27.073", "D", "08:00 · full sun"],
+        ["16:12:27.316", "D", "09:00-17:00 · full sun"],
+        ["16:12:28.861", "D", "18:00 · full sun"],
+        ["16:12:29.059", "D", "19:00 · shade"],
+        ["16:12:29.536", "OK", "measured · 11h direct sun · no shade"],
+        ["16:12:29.700", "OK", "patio located · 1m grid · marker locked"],
+        ["16:12:29.951", "WARN", "heat advisory · sat jul 4 · 97°F mostly sun"]
+      ],
+      "stats": [
+        ["SOLD PULLED", "500", "white"],
+        ["PHOTOS READ", "44", "white"],
+        ["FLAGGED", "3", "yellow"],
+        ["POSTCARDS", "1", "green"]
+      ]
+    }
+  ]
+}
