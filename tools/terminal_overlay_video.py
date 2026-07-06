@@ -4,6 +4,10 @@ frame (dark log panel on the left, the clip itself letterboxed into a
 framed panel on the right) -- the layout used in ShadeScout's teaser/demo
 videos.
 
+The log panel is animated: lines stream in progressively over each clip's
+own duration (like a live n8n execution log tailing in), ending on a
+blinking cursor, instead of sitting there as one static frame.
+
 Each source clip keeps its own aspect ratio: it is scaled to fit inside the
 video panel and letterboxed (never cropped or stretched), so combining
 clips of different native resolutions does not distort any of them.
@@ -15,13 +19,13 @@ config.json:
 {
   "title": "CLAUDE FABLE / CAMPAIGNS / SUNDIAL · DALLAS-FORT WORTH",
   "active_tab": "Census",
-  "prompt": "sundial@fable-5 : ~ % fable census --metro dfw --sold 12mo",
+  "prompt": "n8n ▸ shadescout · execution #482 · webhook received",
   "disclaimer": ["line one", "line two"],
   "clips": [
     {
       "video": "path/to/clip1.mp4",
-      "pill": "aerial scan · property located",
-      "log": [["16:12:24.487", "INFO", "zillow sold feed · 1 property matched"], ...],
+      "pill": "n8n · imagery captured",
+      "log": [["16:12:24.487", "INFO", "n8n · 1. RealtyAPI Search By Zip -> 200 OK"], ...],
       "stats": [["SOLD PULLED", "500", "white"], ...]
     },
     ...
@@ -43,6 +47,16 @@ W, H = 1920, 1080
 TOPBAR_H = 90
 LEFT_W = 660
 RECT = (660, 90, 1880, 990)  # x0, y0, x1, y1 -- video panel in the 1920x1080 canvas
+FPS = 30
+
+# reveal pacing: lines stream in over REVEAL_FRACTION of the clip's
+# duration (leaving the tail for a blinking "still running" cursor),
+# clamped to a sane per-line interval so a short clip doesn't reveal all
+# its lines instantly and a long clip doesn't crawl.
+REVEAL_FRACTION = 0.75
+MIN_LINE_INTERVAL = 0.35
+MAX_LINE_INTERVAL = 1.1
+BLINK_PERIOD = 0.45
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 MONO = f"{FONT_DIR}/DejaVuSansMono.ttf"
@@ -94,7 +108,13 @@ def _draw_tabs(d, active):
         x += tw + 34
 
 
-def _draw_terminal(d, prompt, lines):
+def _draw_terminal(d, prompt, lines, n_shown, show_bottom_prompt, cursor_on):
+    """Draw the terminal panel with only `n_shown` of `lines` revealed.
+
+    When `show_bottom_prompt` is True (all lines revealed), an extra
+    "$ " row is drawn at the bottom with a blinking cursor block, so the
+    panel reads as "still live" rather than finished/static.
+    """
     pf = _font(MONO, 16)
     lf = _font(MONO, 15)
     x, y = 28, TOPBAR_H + 70
@@ -103,15 +123,21 @@ def _draw_terminal(d, prompt, lines):
     d.line([x, y - 4, LEFT_W - 28, y - 4], fill=(30, 31, 36))
     y += 6
     level_colors = {"INFO": CYAN, "OK": GREEN, "WARN": YELLOW, "D": DIM}
-    for ts, level, msg in lines:
+    for ts, level, msg in lines[:n_shown]:
         d.text((x, y), ts, font=lf, fill=DIM)
         lvl_x = x + 118
         d.text((lvl_x, y), level, font=lf, fill=level_colors.get(level, WHITE))
         d.text((lvl_x + 56, y), msg, font=lf, fill=(200, 202, 208) if level != "D" else GRAY)
         y += 21
     y += 8
-    d.text((x, y), "$ ", font=pf, fill=GREEN)
-    d.rectangle([x + 18, y + 2, x + 28, y + 18], fill=(200, 210, 200))
+    if show_bottom_prompt:
+        d.text((x, y), "$ ", font=pf, fill=GREEN)
+        if cursor_on:
+            d.rectangle([x + 18, y + 2, x + 28, y + 18], fill=(200, 210, 200))
+    else:
+        # mid-stream: draw a steady (non-blinking) cursor right after the
+        # last revealed line, so it reads as "still typing/streaming".
+        d.rectangle([x, y + 2, x + 10, y + 18], fill=(200, 210, 200))
 
 
 def _draw_stats(d, stats):
@@ -150,12 +176,13 @@ def _draw_pill(d, text):
     d.text((px0 + 30, py0 + 8), text, font=pf, fill=WHITE)
 
 
-def build_background(path, title, active_tab, prompt, log_lines, stats, disclaimer, pill_text):
+def render_frame(path, title, active_tab, prompt, log_lines, stats, disclaimer, pill_text,
+                  n_shown, show_bottom_prompt, cursor_on):
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im, "RGBA")
     _draw_topbar(d, title)
     _draw_tabs(d, active_tab)
-    _draw_terminal(d, prompt, log_lines)
+    _draw_terminal(d, prompt, log_lines, n_shown, show_bottom_prompt, cursor_on)
     _draw_stats(d, stats)
     _draw_disclaimer(d, disclaimer)
     _draw_video_frame(d)
@@ -163,7 +190,72 @@ def build_background(path, title, active_tab, prompt, log_lines, stats, disclaim
     im.save(path)
 
 
-def composite_clip(bg_png, video_path, out_path):
+def probe_duration(video_path):
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+        check=True, capture_output=True, text=True,
+    )
+    return float(out.stdout.strip())
+
+
+def build_reveal_schedule(duration, num_lines):
+    """Return a list of (n_shown, show_bottom_prompt, cursor_on, seg_duration)."""
+    if num_lines == 0:
+        return [(0, True, True, duration)]
+
+    interval = duration * REVEAL_FRACTION / num_lines
+    interval = max(MIN_LINE_INTERVAL, min(MAX_LINE_INTERVAL, interval))
+
+    schedule = []
+    for k in range(num_lines):
+        schedule.append((k, False, False, interval))
+    reveal_elapsed = interval * num_lines
+    remaining = max(0.0, duration - reveal_elapsed)
+
+    cursor_on = True
+    t = 0.0
+    if remaining <= 0:
+        # not enough tail for even one blink frame -- still show one so
+        # the clip ends on the finished-log state.
+        schedule.append((num_lines, True, True, max(0.05, duration - reveal_elapsed + 0.05)))
+        return schedule
+    while t < remaining:
+        seg = min(BLINK_PERIOD, remaining - t)
+        schedule.append((num_lines, True, cursor_on, seg))
+        t += seg
+        cursor_on = not cursor_on
+    return schedule
+
+
+def build_background_video(tmp, idx, duration, title, active_tab, prompt, log_lines, stats,
+                            disclaimer, pill_text):
+    schedule = build_reveal_schedule(duration, len(log_lines))
+    list_path = tmp / f"bg_{idx}_list.txt"
+    frames = []
+    with open(list_path, "w") as f:
+        for i, (n_shown, show_bottom_prompt, cursor_on, seg_dur) in enumerate(schedule):
+            frame_path = tmp / f"bg_{idx}_{i}.png"
+            render_frame(frame_path, title, active_tab, prompt, log_lines, stats, disclaimer,
+                         pill_text, n_shown, show_bottom_prompt, cursor_on)
+            frames.append(frame_path)
+            f.write(f"file '{frame_path.name}'\n")
+            f.write(f"duration {seg_dur:.3f}\n")
+        # concat demuxer quirk: last entry's duration is ignored unless
+        # followed by one more file line, so repeat the final frame.
+        f.write(f"file '{frames[-1].name}'\n")
+
+    bg_video = tmp / f"bg_{idx}.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+         "-r", str(FPS), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "16",
+         str(bg_video), "-loglevel", "error"],
+        check=True, cwd=tmp,
+    )
+    return bg_video
+
+
+def composite_clip(bg_video, video_path, out_path):
     x0, y0, x1, y1 = RECT
     rw, rh = x1 - x0, y1 - y0
     filt = (
@@ -172,7 +264,7 @@ def composite_clip(bg_png, video_path, out_path):
         f"[0:v][v]overlay={x0}:{y0}:shortest=1[outv]"
     )
     cmd = [
-        "ffmpeg", "-y", "-loop", "1", "-i", str(bg_png), "-i", str(video_path),
+        "ffmpeg", "-y", "-i", str(bg_video), "-i", str(video_path),
         "-filter_complex", filt, "-map", "[outv]", "-map", "1:a",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
         "-c:a", "aac", "-shortest", str(out_path), "-loglevel", "error",
@@ -208,13 +300,13 @@ def main():
         tmp = Path(tmp)
         parts = []
         for i, clip in enumerate(config["clips"]):
-            bg_png = tmp / f"bg_{i}.png"
-            build_background(
-                bg_png, title, active_tab, prompt,
+            duration = probe_duration(clip["video"])
+            bg_video = build_background_video(
+                tmp, i, duration, title, active_tab, prompt,
                 clip["log"], clip["stats"], disclaimer, clip["pill"],
             )
             part_path = tmp / f"part_{i}.mp4"
-            composite_clip(bg_png, clip["video"], part_path)
+            composite_clip(bg_video, clip["video"], part_path)
             parts.append(part_path)
         concat(parts, args.output)
 
